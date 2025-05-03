@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Laporan Kegiatan Pegawai</title>
+    <style>
+        body {
+            font-family: 'Times New Roman', Times, serif;
+            padding: 40px;
+            line-height: 1.5;
+            font-size: 11pt;
+            color: #000;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            margin-bottom: 30px;
+        }
+
+        .header img {
+            width: 120px;
+            height: auto;
+            margin-bottom: 10px;
+        }
+
+        .judul {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 16pt;
+            text-decoration: underline;
+        }
+
+        .periode {
+            font-size: 11pt;
+            margin-top: 5px;
+        }
+
+        .identitas {
+            margin-bottom: 15px;
+        }
+
+        .identitas p {
+            margin: 2px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 10.5pt;
+        }
+
+        th,
+        td {
+            border: 1px solid black;
+            padding: 6px;
+            vertical-align: top;
+        }
+
+        th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        td {
+            text-align: center;
+        }
+
+        td.deskripsi {
+            text-align: justify;
+        }
+
+        img.foto {
+            width: 60px;
+            height: auto;
+            display: block;
+            margin: auto;
+        }
+
+        .page-break {
+            page-break-after: always;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.1/moment-with-locales.js"></script>
+    <script>
+        // Set locale to Indonesia
+        moment.locale('id');
+    </script>
+</head>
+
+<body>
+
+    <div class="header">
+        <img src="<%= baseUrl %>/public/assets/Logo.png" alt="Logo Instansi">
+    </div>
+
+    <div class="judul">
+        <h2>LAPORAN KEGIATAN BULANAN</h2>
+        <p class="periode">
+            <strong>Periode:</strong>
+            <%= moment(tanggal_awal).format('LL') %> s.d.
+            <%= moment(tanggal_akhir).format('LL') %>
+        </p>
+    </div>
+
+    <% Object.keys(laporanByUser).forEach((userId, idx) => {
+        const user = laporanByUser[userId];
+    %>
+        <div class="identitas">
+            <p><strong>Nama Lengkap:</strong> <%= user.nama_lengkap %></p>
+            <p><strong>NIP:</strong> <%= user.nip %></p>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>No</th>
+                    <th>Tanggal</th>
+                    <th>Jam Mulai</th>
+                    <th>Jam Selesai</th>
+                    <th>Deskripsi</th>
+                    <th>Foto Kegiatan</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% user.laporan.forEach((item, index) => { %>
+                    <tr>
+                        <td><%= index + 1 %></td>
+                        <td>
+                            <%= moment(item.tanggal).format('dddd, Do MMMM YYYY') %>
+                        </td>
+                        <td><%= item.jam_mulai?.slice(0, 5).replace(':', '.') %> WIB</td>
+                        <td><%= item.jam_selesai?.slice(0, 5).replace(':', '.') %> WIB</td>
+                        <td class="deskripsi"><%= item.deskripsi %></td>
+                        <td>
+                            <% if (item.foto_kegiatan) { %>
+                                <img class="foto" src="<%= baseUrl + item.foto_kegiatan %>" alt="Foto Kegiatan">
+                            <% } else { %>
+                                Tidak ada
+                            <% } %>
+                        </td>
+                    </tr>
+                <% }) %>
+            </tbody>
+        </table>
+
+        <% if (idx < Object.keys(laporanByUser).length - 1) { %>
+            <div class="page-break"></div>
+        <% } %>
+    <% }) %>
+
+</body>
+
+</html>

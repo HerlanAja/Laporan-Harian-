@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Laporan Kegiatan Pegawai</title>
+  <style>
+    body {
+      font-family: 'Times New Roman', Times, serif;
+      padding: 40px;
+      line-height: 1.0;
+      text-align: justify;
+      font-size: 11pt;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      margin-bottom: 20px;
+    }
+
+    .header img {
+      width: 200px;
+      height: auto;
+      margin-right: 50px;
+    }
+
+    .judul {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    h2 {
+      margin: 5px 0;
+      font-size: 14pt;
+      text-decoration: underline;
+    }
+
+    .identitas {
+      margin-bottom: 20px;
+    }
+
+    .identitas div {
+      display: flex;
+      margin-bottom: 5px;
+    }
+
+    .identitas strong {
+      min-width: 150px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    th,
+    td {
+      border: 1px solid black;
+      padding: 10px;
+      font-size: 11pt;
+      vertical-align: top;
+    }
+
+    th {
+      background-color: #f2f2f2;
+      text-align: center;
+    }
+
+    td.waktu {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    td.deskripsi {
+      text-align: justify;
+    }
+
+    td.nomor {
+      text-align: center;
+    }
+
+    td.foto {
+      text-align: center;
+    }
+
+    img.foto-img {
+      width: 50px;
+      height: auto;
+      display: block;
+      margin: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <img src="http://localhost:8080/public/assets/Logo.png" alt="Logo Instansi">
+  </div>
+
+  <!-- Judul -->
+  <div class="judul">
+    <h2>LAPORAN KEGIATAN HARIAN</h2>
+  </div>
+
+  <!-- Identitas -->
+  <div class="identitas">
+    <div><strong>Nama Lengkap</strong>: <%= nama_lengkap %></div>
+    <div><strong>Nomor Induk Pegawai</strong>: <%= nip %></div>
+    <div><strong>Tanggal Laporan</strong>:
+      <%= new Date(tanggal).toLocaleDateString("id-ID", {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }) %>
+    </div>
+  </div>
+
+  <!-- Fungsi Format Jam -->
+  <% function formatJam(jam) {
+      const [hours, minutes] = jam.split(":");
+      return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
+  } %>
+
+  <!-- Tabel Laporan -->
+  <table>
+    <thead>
+      <tr>
+        <th>No</th>
+        <th>Waktu</th>
+        <th>Deskripsi</th>
+        <th>Foto Kegiatan</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% laporan.forEach((item, index) => { %>
+      <tr>
+        <td class="nomor"><%= index + 1 %></td>
+        <td class="waktu">
+          <%= formatJam(item.jam_mulai) %> - <%= formatJam(item.jam_selesai) %>
+        </td>
+        <td class="deskripsi"><%= item.deskripsi %></td>
+        <td class="foto">
+          <img class="foto-img" src="<%= baseUrl + item.foto_kegiatan %>" alt="Foto Kegiatan">
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table>
+
+  <!-- Tanda Tangan -->
+  <div class="signature" style="margin-top: 20px; width: 100%; display: flex; justify-content: flex-end;">
+    <div style="display: flex; flex-direction: column; align-items: center;">
+      <p style="margin: 0;">
+        Sukabumi,
+        <%= new Date().toLocaleDateString("id-ID", {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        }) %>
+      </p>
+      <img src="<%= baseUrl + tandatangan %>" alt="Tanda Tangan"
+        style="width: 150px; height: auto; margin: 5px 0;">
+      <p style="margin: 0;"><strong><%= nama_lengkap %></strong></p>
+      <p style="margin: 0;">NIP. <%= nip %></p>
+    </div>
+  </div>
+
+</body>
+
+</html>
