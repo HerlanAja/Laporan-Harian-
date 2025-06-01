@@ -6,6 +6,10 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const util = require('util');
 const moment = require('moment');
+const PDFDocument = require("pdfkit");
+const axios = require("axios");
+
+
 
 
 // Konfigurasi penyimpanan file foto kegiatan
@@ -153,75 +157,337 @@ const getLaporanByIdAndTanggal = (req, res) => {
     });
 };
 
-
-// Fungsi Membuat PDF
-const query = util.promisify(db.query).bind(db);
-
-const generateLaporanPDF = async (req, res) => {
-    const { pengguna_id, tanggal } = req.query;
-
+// FUngsi Melihat riwayat laporan
+const riwayatLaporanHariIni = async (req, res) => {
     try {
-        // Ambil data laporan dari database menggunakan Promise
-        const results = await query(
-            `SELECT laporan.*, pengguna.nama_lengkap, pengguna.nip, pengguna.tandatangan 
-            FROM laporan 
-            JOIN pengguna ON laporan.pengguna_id = pengguna.id
-            WHERE laporan.pengguna_id = ? AND laporan.tanggal = ?`,
-            [pengguna_id, tanggal]
+        const pengguna_id = req.user.id;
+        const today = new Date().toISOString().split('T')[0];
+
+        const [results] = await db.promise().query(
+            `SELECT id, tanggal, jam_mulai, jam_selesai, deskripsi, foto_kegiatan 
+             FROM laporan 
+             WHERE pengguna_id = ? AND tanggal = ?
+             ORDER BY jam_mulai DESC`,
+            [pengguna_id, today]
         );
 
-        if (results.length === 0) {
-            return res.status(404).json({ message: "Tidak ada laporan ditemukan" });
-        }
-
-        // Siapkan data untuk template EJS
-        const dataLaporan = {
-            nama_lengkap: results[0].nama_lengkap,
-            nip: results[0].nip,
-            tanggal: results[0].tanggal,
-            laporan: results,
-            tandatangan: results[0].tandatangan ? `/` + results[0].tandatangan.replace(/\\/g, "/") : null,
-            baseUrl: process.env.BASE_URL || "https://silahar3272.ftv.sh",
-        };
-
-        // Render file EJS ke HTML
-        const templatePath = path.join(__dirname, "../views/laporan.ejs");
-        const html = await ejs.renderFile(templatePath, dataLaporan);
-
-        // Konversi HTML ke PDF dengan Puppeteer
-        const browser = await puppeteer.launch({ headless: true });
-        const page = await browser.newPage();
-        await page.setContent(html, { waitUntil: "networkidle0" });
-
-        // Tentukan lokasi penyimpanan file PDF
-        const pdfFilename = `Laporan_${pengguna_id}_${tanggal}.pdf`;
-        const pdfPath = path.join(__dirname, "../public", pdfFilename);
-
-        // Generate PDF dan simpan
-        await page.pdf({ path: pdfPath, format: "A4" });
-        await browser.close();
-
-        // Kirim file PDF ke user
-        res.download(pdfPath, pdfFilename, async (err) => {
-            if (err) {
-                console.error("Gagal mengirim file PDF:", err);
-            } else {
-                try {
-                    // Hapus file PDF setelah 5 detik
-                    setTimeout(async () => {
-                        await fs.promises.unlink(pdfPath);
-                        console.log(`File ${pdfPath} berhasil dihapus.`);
-                    }, 5000);
-                } catch (unlinkErr) {
-                    console.error("Gagal menghapus file PDF:", unlinkErr);
-                }
-            }
+        res.status(200).json({
+            message: "Riwayat laporan hari ini berhasil diambil",
+            data: results
         });
     } catch (error) {
-        console.error("Terjadi kesalahan:", error);
-        res.status(500).json({ message: "Terjadi kesalahan", error });
+        console.error("Error in riwayatLaporanHariIni:", error);
+        res.status(500).json({
+            message: "Terjadi kesalahan saat mengambil riwayat laporan",
+            error: error.message
+        });
     }
 };
+
+
+// Promisify query
+const query = util.promisify(db.query).bind(db);
+
+// Konfigurasi
+const BASE_URL = "http://silahar3272.ftp.sh:3000";
+const LOGO_PATH = "/public/assets/Logo.png";
+
+// Direktori
+const UPLOADS_DIR = path.join(__dirname, "../uploads");
+const FOTO_KEGIATAN_DIR = path.join(UPLOADS_DIR, "foto_kegiatan");
+const TANDATANGAN_DIR = path.join(UPLOADS_DIR, "tandatangan");
+const LAPORAN_DIR = path.join(UPLOADS_DIR, "laporan");
+const TEMP_FILE_PREFIX = "temp_laporan_";
+
+// Pastikan direktori ada
+[UPLOADS_DIR, FOTO_KEGIATAN_DIR, TANDATANGAN_DIR, LAPORAN_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`Direktori dibuat: ${dir}`);
+  }
+});
+
+// Helper: Bangun URL
+const buildUrl = (...segments) =>
+  `${BASE_URL}/${segments.map(s => s.replace(/^\/+|\/+$/g, "")).join("/")}`;
+
+// Helper: Tambah gambar ke PDF
+const addImageToPdf = async (url, doc, x, y, options = {}) => {
+  try {
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 5000,
+    });
+
+    if (response.status !== 200) throw new Error(`Status code ${response.status}`);
+
+    const tempPath = path.join(LAPORAN_DIR, `${TEMP_FILE_PREFIX}${Date.now()}.tmp`);
+    await fs.promises.writeFile(tempPath, response.data);
+
+    doc.image(tempPath, x, y, options);
+    await fs.promises.unlink(tempPath);
+
+    return true;
+  } catch (err) {
+    console.error(`[LAPORAN] Gagal memuat gambar: ${err.message}`);
+    return false;
+  }
+};
+
+// Helper: Menggambar garis horizontal pada PDF
+const drawHorizontalLine = (doc, y, marginLeft = 40, marginRight = 40) => {
+  doc.moveTo(marginLeft, y)
+     .lineTo(doc.page.width - marginRight, y)
+     .stroke();
+  return doc;
+};
+
+// Helper: Mengukur tinggi teks multi-line
+const calculateTextHeight = (doc, text, options = {}) => {
+  const defaultOptions = { width: 200, align: 'left' };
+  const mergedOptions = { ...defaultOptions, ...options };
+  return doc.heightOfString(text, mergedOptions);
+};
+
+// Fungsi Utama
+const generateLaporanPDF = async (req, res) => {
+  console.log("[LAPORAN] Memulai proses generate PDF", { query: req.query });
+
+  const { pengguna_id, tanggal } = req.query;
+
+  // Validasi input
+  if (!pengguna_id || !tanggal) {
+    return res.status(400).json({
+      success: false,
+      message: "Parameter pengguna_id dan tanggal diperlukan",
+    });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    return res.status(400).json({
+      success: false,
+      message: "Format tanggal harus YYYY-MM-DD",
+      received: tanggal,
+    });
+  }
+
+  try {
+    console.log("[LAPORAN] Query laporan dari database");
+
+    const results = await query(`
+      SELECT laporan.*, pengguna.nama_lengkap, pengguna.nip, pengguna.tandatangan 
+      FROM laporan 
+      JOIN pengguna ON laporan.pengguna_id = pengguna.id
+      WHERE laporan.pengguna_id = ? AND laporan.tanggal = ?
+      ORDER BY laporan.jam_mulai ASC
+    `, [pengguna_id, tanggal]);
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Tidak ada laporan ditemukan untuk pengguna dan tanggal tersebut",
+      });
+    }
+
+    const laporan = results;
+    const { nama_lengkap, nip, tandatangan } = laporan[0];
+
+    const logoUrl = buildUrl(LOGO_PATH);
+    const ttdUrl = tandatangan ? buildUrl("uploads", "tandatangan", path.basename(tandatangan)) : null;
+
+    const safeName = nama_lengkap.replace(/[^a-z0-9]/gi, "_").substring(0, 50);
+    const timestamp = Date.now();
+    const pdfFilename = `Laporan_${safeName}_${tanggal}_${timestamp}.pdf`;
+    const pdfPath = path.join(LAPORAN_DIR, pdfFilename);
+
+    const doc = new PDFDocument({
+      size: "A4",
+      margins: { top: 50, bottom: 50, left: 50, right: 50 },
+      info: {
+        Title: `Laporan Harian ${nama_lengkap}`,
+        Author: nama_lengkap,
+        CreationDate: new Date()
+      }
+    });
+
+    const writeStream = fs.createWriteStream(pdfPath);
+    doc.pipe(writeStream);
+
+    // === HEADER SECTION ===
+    // Tambahkan Logo di kiri
+    const logoAdded = await addImageToPdf(logoUrl, doc, 50, 50, { width: 120, height: 50 });
+    if (!logoAdded) doc.text("LOGO DINAS", 50, 50);
+
+    // Judul Laporan - dibuat bold dan di tengah di bawah logo
+    const titleY = 110; // Posisi Y di bawah logo
+    doc.fontSize(16).font('Helvetica-Bold').text("LAPORAN KEGIATAN HARIAN", 50, titleY, { 
+      align: "center", 
+      width: doc.page.width - 100
+    });
+    
+    // REMOVED: Garis di bawah judul
+    // drawHorizontalLine(doc, titleY + 25, 50, 50);
+    
+    // === INFORMASI PEGAWAI ===
+    doc.fontSize(12).font('Helvetica');
+    
+    const infoY = titleY + 40; 
+    
+    doc.text("Nama Lengkap", 50, infoY);
+    doc.text(":", 200, infoY);
+    doc.text(nama_lengkap, 220, infoY);
+    
+    doc.text("Nomor Induk Pegawai", 50, infoY + 20);
+    doc.text(":", 200, infoY + 20);
+    doc.text(nip, 220, infoY + 20);
+
+    const formattedTanggal = new Date(tanggal).toLocaleDateString("id-ID", {
+      weekday: "long", year: "numeric", month: "long", day: "numeric"
+    });
+    
+    doc.text("Tanggal Laporan", 50, infoY + 40);
+    doc.text(":", 200, infoY + 40);
+    doc.text(formattedTanggal, 220, infoY + 40);
+    
+    // === TABEL KEGIATAN ===
+    const tableTop = infoY + 80;
+    
+    // Header tabel
+    doc.font('Helvetica-Bold').fontSize(12);
+    
+    // Garis atas tabel
+    drawHorizontalLine(doc, tableTop - 5, 50, 50);
+    
+    // Header kolom
+    doc.text("No", 50, tableTop);
+    doc.text("Waktu", 80, tableTop);
+    doc.text("Deskripsi", 180, tableTop);
+    doc.text("Foto Kegiatan", 380, tableTop);
+    
+    // Garis bawah header
+    drawHorizontalLine(doc, tableTop + 20, 50, 50);
+    
+    // Tampilkan data
+    doc.font('Helvetica').fontSize(11);
+    let currentY = tableTop + 30;
+    
+    // Konfigurasi untuk layout 6 foto per halaman
+    const photosPerPage = 6;
+    const photoWidth = 100;
+    const photoHeight = 80;
+    const photoGap = 10;
+    
+    // Menampilkan maksimal 6 kegiatan per halaman
+    const maxEntries = Math.min(laporan.length, photosPerPage);
+    
+    for (let i = 0; i < maxEntries; i++) {
+      const item = laporan[i];
+      const jamMulai = item.jam_mulai?.slice(0, 5) || "-";
+      const jamSelesai = item.jam_selesai?.slice(0, 5) || "-";
+      
+      // Menampilkan nomor
+      doc.text(`${i + 1}`, 50, currentY);
+      
+      // Menampilkan waktu
+      doc.text(`${jamMulai} - ${jamSelesai}`, 80, currentY);
+      
+      // Menampilkan deskripsi (dengan batas lebar)
+      doc.text(item.deskripsi || "-", 180, currentY, { 
+        width: 180, 
+        align: "left" 
+      });
+
+      // Menampilkan foto kegiatan
+      const fotoUrl = item.foto_kegiatan ? buildUrl("uploads", "foto_kegiatan", path.basename(item.foto_kegiatan)) : null;
+      
+      if (fotoUrl) {
+        const fotoAdded = await addImageToPdf(fotoUrl, doc, 380, currentY - 5, { 
+          width: photoWidth, 
+          height: photoHeight,
+          fit: [photoWidth, photoHeight] 
+        });
+        if (!fotoAdded) doc.text("(Foto tidak tersedia)", 380, currentY, { align: "center" });
+      } else {
+        doc.text("-", 380, currentY, { align: "center" });
+      }
+      
+      // Update posisi Y untuk baris berikutnya
+      currentY += photoHeight + photoGap;
+      
+      // Garis pembatas antar baris
+      drawHorizontalLine(doc, currentY - 5, 50, 50);
+    }
+
+    // === TANDA TANGAN ===
+    // Posisikan tanda tangan di sebelah kanan
+    const ttdY = currentY + 20;
+    
+    const currentDate = new Date().toLocaleDateString("id-ID", {
+      year: "numeric", month: "long", day: "numeric"
+    });
+    
+    // Tempat dan tanggal
+    doc.fontSize(11).text(`Sukabumi, ${currentDate}`, doc.page.width - 200, ttdY, { align: "right" });
+    
+    // Tambahkan tanda tangan
+    if (ttdUrl) {
+      const ttdAdded = await addImageToPdf(ttdUrl, doc, doc.page.width - 200, ttdY + 20, { width: 120, height: 60 });
+      if (!ttdAdded) {
+        doc.text("(Tanda tangan tidak tersedia)", doc.page.width - 200, ttdY + 20, { align: "right" });
+      }
+    }
+    
+    // Nama dan NIP
+    doc.fontSize(11).text(nama_lengkap, doc.page.width - 200, ttdY + 90, { align: "right" });
+    doc.text(`NIP. ${nip}`, doc.page.width - 200, ttdY + 105, { align: "right" });
+
+    doc.end();
+
+    writeStream.on("finish", () => {
+      res.download(pdfPath, pdfFilename, async (err) => {
+        if (err) {
+          console.error("[LAPORAN] Gagal mengirim file:", err);
+          return res.status(500).json({ success: false, message: "Gagal mengirim file PDF", error: err.message });
+        }
+
+        setTimeout(async () => {
+          try {
+            await fs.promises.unlink(pdfPath);
+            console.log("[LAPORAN] File PDF berhasil dihapus");
+          } catch (err) {
+            console.error("[LAPORAN] Gagal menghapus file PDF:", err);
+          }
+        }, 10000);
+      });
+    });
+
+    writeStream.on("error", (err) => {
+      console.error("[LAPORAN] Error write stream:", err);
+      throw err;
+    });
+
+  } catch (error) {
+    console.error("[LAPORAN] Error utama:", {
+      message: error.message,
+      stack: error.stack,
+      sqlMessage: error.sqlMessage,
+      code: error.code,
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat membuat laporan",
+      error: error.message,
+      ...(process.env.NODE_ENV === "development" && {
+        stack: error.stack,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+      }),
+    });
+  }
+};
+
+// For demonstration purposes
+console.log("PDF generator modified - underline removed from title");
 
 
 // Fungsi Membuat PDF Berdasarkan rentang tanggal
@@ -263,7 +529,7 @@ const generateLaporanPDFTanggal = async (req, res) => {
             laporanByUser,
             tanggal_awal,
             tanggal_akhir,
-            baseUrl: process.env.BASE_URL || "https://silahar3272.ftp.sh", // Menyediakan baseUrl untuk akses gambar
+            baseUrl: process.env.BASE_URL || "http://silahar3272.ftp.sh:3000", // Menyediakan baseUrl untuk akses gambar
         });
 
         // Konversi HTML ke PDF menggunakan Puppeteer
@@ -362,7 +628,7 @@ const generateLaporanPDFByIdAndTanggalRange = async (req, res) => {
             tanggal_awal,
             tanggal_akhir,
             moment,
-            baseUrl: process.env.BASE_URL || "https://silahar3272.ftp.sh",
+            baseUrl: process.env.BASE_URL || "http://silahar3272.ftp.sh:3000",
         });
 
         const browser = await puppeteer.launch({ headless: true });
@@ -425,4 +691,4 @@ const getGrafikLaporanHariIni = (req, res) => {
   
   
 
-module.exports = { tambahLaporan, getAllLaporan, getLaporanByIdAndTanggal, generateLaporanPDF, generateLaporanPDFTanggal, generateLaporanPDFByIdAndTanggalRange, getGrafikLaporanHariIni };
+module.exports = { tambahLaporan, getAllLaporan, getLaporanByIdAndTanggal, generateLaporanPDF, generateLaporanPDFTanggal, generateLaporanPDFByIdAndTanggalRange, getGrafikLaporanHariIni, riwayatLaporanHariIni};

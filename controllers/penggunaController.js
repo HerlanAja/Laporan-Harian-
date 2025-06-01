@@ -67,26 +67,25 @@ exports.tambahPengguna = async (req, res) => {
 
 // Fungsi Get Semua Pengguna atau Pengguna berdasarkan ID
 exports.getPengguna = (req, res) => {
-    const { id } = req.params;
-
-    let sql = 'SELECT id, nama_lengkap, nip, email, username, role, tandatangan FROM pengguna';
-    let params = [];
-
-    if (id) {
-        sql += ' WHERE id = ?';
-        params.push(id);
+    // Hanya izinkan admin (role = 'admin')
+    if (!req.user || req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Akses ditolak. Hanya admin yang dapat melihat semua pengguna.' });
     }
 
-    db.query(sql, params, (err, results) => {
-        if (err) return res.status(500).json({ message: 'Gagal mengambil data pengguna', error: err });
+    const sql = `
+        SELECT id, nama_lengkap, nip, email, username, role, tandatangan 
+        FROM pengguna
+    `;
 
-        if (id && results.length === 0) {
-            return res.status(404).json({ message: 'Pengguna tidak ditemukan' });
+    db.query(sql, (err, results) => {
+        if (err) {
+            return res.status(500).json({ message: 'Gagal mengambil data pengguna', error: err });
         }
 
         res.json({ message: 'Data pengguna berhasil diambil!', data: results });
     });
 };
+
 
 
 // Fungsi Login Pengguna dengan Username
